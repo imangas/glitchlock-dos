@@ -12,7 +12,7 @@
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General Public License for more details.
-const CACHE_NAME = "dos-pwa-v0.12.0"; // x-release-please-version
+const CACHE_NAME = "dos-pwa-v0.13.0"; // x-release-please-version
 
 // 1. URLs exactas a precargar en la instalación
 const ASSETS_TO_CACHE = [
