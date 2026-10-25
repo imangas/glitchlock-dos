@@ -282,37 +282,7 @@ function buildGameConfigFormElement(gameConfig, { onSaved, onCancelled }) {
             </div>
 
             <!-- Section: Identity -->
-            <div class="space-y-6">
-              <div class="flex items-center gap-2 mb-4">
-                <span class="text-tertiary font-bold">01.</span>
-                <h2 class="text-on-surface font-bold uppercase text-sm tracking-widest">DOS Parameters</h2>
-                <div class="flex-1 border-t border-outline-variant/30 ml-4"></div>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div class="space-y-2">
-              <label class="block text-[10px] text-secondary font-bold uppercase">dos Save File Path</label>
-              <input name="dosSaveFilePath" id="dosSaveFilePath" class="w-full bg-surface-container-low border-b-2 border-outline focus:border-primary px-3 py-2 text-primary font-mono outline-none transition-colors" type="text" value="${escapeHtml(gameConfig.dosSaveFilePath)}">
-              </div>
-              <div class="space-y-2">
-              <label class="block text-[10px] text-secondary font-bold uppercase">dos Save File Name</label>
-              <input name="dosSaveFileName" class="w-full bg-surface-container-low border-b-2 border-outline focus:border-primary px-3 py-2 text-primary font-mono outline-none transition-colors" type="text" value="${escapeHtml(gameConfig.dosSaveFileName)}">
-              </div>
-              </div>
-            </div>
-
-            <div class="space-y-6">
-              <div class="flex items-center gap-2 mb-4">
-              <span class="text-tertiary font-bold">02.</span>
-              <h2 class="text-on-surface font-bold uppercase text-sm tracking-widest">OPFS Parameters</h2>
-              <div class="flex-1 border-t border-outline-variant/30 ml-4"></div>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div class="space-y-2">
-              <label class="block text-[10px] text-secondary font-bold uppercase">OPFS Save File Path</label>
-              <input name="opfsSaveFilePath" class="w-full bg-surface-container-low border-b-2 border-outline focus:border-primary px-3 py-2 text-primary font-mono outline-none transition-colors" type="text" value="${gameConfig.opfsSaveFilePath}"/>
-              </div>
-              </div>
-            </div>
+            ${buildSaveGameSectionHtml(gameConfig)}
 
             <div class="space-y-6">
               <div class="flex items-center gap-2 mb-4">
@@ -344,30 +314,13 @@ function buildGameConfigFormElement(gameConfig, { onSaved, onCancelled }) {
                 />
                 <label for="mouseCapture" class="text-[10px] text-secondary font-bold uppercase">Mouse Capture</label>
               </div>
-
-              <div class="flex items-center gap-4 mt-6">
-                <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    name="saveModePersist"
-                    class="sr-only peer"
-                    ${getSaveMode(gameConfig) === SAVE_MODE_PERSIST ? "checked" : ""}
-                  />
-                  <div class="w-11 h-6 bg-surface-container-high border border-outline rounded-full relative transition-colors peer-checked:bg-primary/30 peer-checked:border-primary after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:w-4 after:h-4 after:rounded-full after:bg-secondary after:transition-transform peer-checked:after:translate-x-5 peer-checked:after:bg-primary"></div>
-                </label>
-                <div>
-                  <p class="text-[10px] text-secondary font-bold uppercase">Save method</p>
-                  <p class="text-[10px] text-secondary-fixed-dim">
-                    OFF: single save file &middot; ON: full emulator image
-                  </p>
-                </div>
-              </div>
             </div>
           </form>
 
           <!-- Final Actions -->
           <div class="pt-6 pb-6 md:pb-24 flex gap-4" id="setup_action_buttons"></div>
         `;
+  bindSaveModeToggle(wrapper);
 
   const setupActionButtons = wrapper.querySelector("#setup_action_buttons");
 
@@ -430,6 +383,67 @@ function buildGameConfigFormElement(gameConfig, { onSaved, onCancelled }) {
 
   return wrapper;
 }
+
+function buildSaveGameSectionHtml(gameConfig) {
+  const isPersist = getSaveMode(gameConfig) === SAVE_MODE_PERSIST;
+
+  return `
+    <div class="space-y-6">
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-tertiary font-bold">01.</span>
+        <h2 class="text-on-surface font-bold uppercase text-sm tracking-widest">Save Game</h2>
+        <div class="flex-1 border-t border-outline-variant/30 ml-4"></div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+          <input
+            type="checkbox"
+            name="saveModePersist"
+            class="sr-only peer"
+            ${isPersist ? "checked" : ""}
+          />
+          <div class="w-11 h-6 bg-surface-container-high border border-outline rounded-full relative transition-colors peer-checked:bg-primary/30 peer-checked:border-primary after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:w-4 after:h-4 after:rounded-full after:bg-secondary after:transition-transform peer-checked:after:translate-x-5 peer-checked:after:bg-primary"></div>
+        </label>
+        <div>
+          <p class="text-[10px] text-secondary font-bold uppercase">Save method</p>
+          <p class="text-[10px] text-secondary-fixed-dim">
+            OFF: single save file &middot; ON: full emulator image
+          </p>
+        </div>
+      </div>
+
+      <div id="save-file-fields">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div class="space-y-2">
+            <label class="block text-[10px] text-secondary font-bold uppercase">dos Save File Path</label>
+            <input name="dosSaveFilePath" class="w-full bg-surface-container-low border-b-2 border-outline focus:border-primary px-3 py-2 text-primary font-mono outline-none transition-colors" type="text" value="${escapeHtml(gameConfig.dosSaveFilePath)}">
+          </div>
+          <div class="space-y-2">
+            <label class="block text-[10px] text-secondary font-bold uppercase">dos Save File Name</label>
+            <input name="dosSaveFileName" class="w-full bg-surface-container-low border-b-2 border-outline focus:border-primary px-3 py-2 text-primary font-mono outline-none transition-colors" type="text" value="${escapeHtml(gameConfig.dosSaveFileName)}">
+          </div>
+          <div class="space-y-2">
+            <label class="block text-[10px] text-secondary font-bold uppercase">opfs Save File Path</label>
+            <input name="opfsSaveFilePath" class="w-full bg-surface-container-low border-b-2 border-outline focus:border-primary px-3 py-2 text-primary font-mono outline-none transition-colors" type="text" value="${escapeHtml(gameConfig.opfsSaveFilePath)}">
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Shows the save file fields only while the save method is "single save file".
+// The fields stay in the form when hidden, so their values are kept and saved.
+function bindSaveModeToggle(root) {
+  const toggle = root.querySelector('input[name="saveModePersist"]');
+  const pathFields = root.querySelector("#save-file-fields");
+
+  const updateVisibility = () => pathFields.classList.toggle("hidden", toggle.checked);
+  toggle.addEventListener("change", updateVisibility);
+  updateVisibility();
+}
+
 function isSaveFileConfigured(config) {
   return Boolean(config.dosSaveFileName && config.opfsSaveFilePath);
 }
