@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/imangas/glitchlock-dos/compare/v0.12.0...v0.13.0) (2026-10-25)
+
+
+### Features
+
+* **setup:** add a save game section that hides the file fields in snapshot mode ([de9e1af](https://github.com/imangas/glitchlock-dos/commit/de9e1af37b79bb6078e1fb081170679a01a3fdec))
+
 ## [0.12.0](https://github.com/imangas/glitchlock-dos/compare/v0.11.4...v0.12.0) (2026-10-21)
 
 
