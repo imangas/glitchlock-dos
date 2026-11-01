@@ -125,41 +125,8 @@ function getDefaultGameConfigByGameId(gameId) {
 }
 
 async function loadList() {
-  const root = await getOpfsDirectory();
-  GAME_GRID.innerHTML = "";
-
-  for await (const [name, handle] of root.entries()) {
-    if (!(handle.kind === "file" && name.endsWith(".zip"))) {
-      continue;
-    }
-    const gameId = getGameIdByFilename(name);
-    const gameConfig = getGameConfigByGameId(gameId);
-
-    const gameCard = document.createElement("div");
-    gameCard.className =
-      "group cursor-pointer bg-surface-container-low border border-outline-variant/20 hover:border-primary/50 transition-all p-3";
-
-    gameCard.innerHTML = `<div class="relative bg-surface-container-high aspect-square mb-4 overflow-hidden border border-primary/20">
-                    <img
-                      class="w-full h-full object-cover grayscale contrast-125 brightness-75 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-300"
-                      data-alt="Retro 90s FPS game screenshot with dark corridors"
-                      src="${escapeHtml(gameConfig?.wallscroll || "./assets/generic1.png")}"
-                    />
-                  <div class="absolute inset-0 bg-primary/10 mix-blend-overlay"></div>
-                </div>
-                <div class="flex justify-between items-start">
-                  <div>
-                    <h3 class="text-on-surface font-bold text-sm group-hover:text-primary">${escapeHtml(gameConfig.name)}
-                    </h3>
-                    <p class="text-secondary text-[10px] mt-1 uppercase">${escapeHtml(gameConfig?.company || "-")}</p>
-                  </div>
-                  <span class="text-primary font-bold text-[10px] tracking-widest"><strike>[INFO]</strike></span>
-                </div>`;
-
-    GAME_GRID.append(gameCard);
-
-    gameCard.onclick = () => loadGameDetails(handle, name, gameId);
-  }
+  const games = await listInstalledGames();
+  GAME_GRID.replaceChildren(...games.map(buildGameCard));
 }
 
 function closeDetailPanel() {
@@ -244,7 +211,7 @@ async function loadGameDetails(handle, name, gameId) {
   gameButtonDelete.className =
     "flex-1 bg-surface-container-high text-secondary py-2 text-[10px] font-bold uppercase tracking-wider border border-outline-variant/30 hover:bg-surface-variant";
   gameButtonDelete.textContent = "🗑️ UNINSTALL";
-  gameButtonDelete.onclick = () => deleteGame(name);
+  gameButtonDelete.onclick = () => deleteGame(gameId);
   gameExtraButtons.append(gameButtonDelete);
 
   const mobileSetupContainer = document.createElement("div");
@@ -537,26 +504,32 @@ async function loadGameBlob(fileHandle) {
   container.style.display = "block";
   dashboardPanel.style.display = "none";
   detailPanel.style.display = "none";
-  container.innerHTML = "";
+  container.innerHTML =
+    '<p class="m-auto text-primary text-xs uppercase tracking-widest">Loading game...</p>';
 
-  // 1. Read the game file from OPFS
-  const file = await fileHandle.getFile();
+  try {
+    const disc = await prepareDisc(gameRuningId);
+    await saveDiscMount(gameRuningId, disc?.image);
+    const zip = await openGameZip(fileHandle);
+    zip.file(".jsdos/dosbox.conf", withDiscMount(config.dosboxConfig, disc?.image));
 
-  // 2. Open the original ZIP in memory with JSZip
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    // Restore the previous progress according to the game's save mode
+    await getSaveStrategy(config).restore(zip, gameRuningId, config);
+    const initFs = attachDisc(zip, disc);
 
-  // Inject the dosbox configuration
-  zip.file(".jsdos/dosbox.conf", config.dosboxConfig);
+    const bundleBlob = await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
+    bundleUrl = URL.createObjectURL(bundleBlob);
 
-  // Restore the previous progress according to the game's save mode
-  await getSaveStrategy(config).restore(zip, gameRuningId, config);
-
-  // 3. Generate a new ZIP blob in memory
-  const bundleBlob = await zip.generateAsync({ type: "blob", mimeType: "application/zip" });
-  bundleUrl = URL.createObjectURL(bundleBlob);
-
-  // 4. Start js-dos v8 with the generated blob URL
-  await startGame({ container, url: bundleUrl, jsDosConfig: config.jsDos });
+    container.innerHTML = "";
+    markLaunchStarted(gameRuningId);
+    await startGame({ container, url: bundleUrl, jsDosConfig: config.jsDos, initFs });
+  } catch (err) {
+    console.error("Failed to prepare the game:", err);
+    container.innerHTML = "";
+    container.style.display = "none";
+    dashboardPanel.style.display = "";
+    alert("The game could not be loaded. It may be too large for this device.");
+  }
 }
 
 function setupGame(name, handle) {
@@ -589,18 +562,21 @@ function setupGame(name, handle) {
   }
 }
 
-async function deleteGame(fileName) {
-  if (!confirm(`Are you sure to delete "${fileName}"?`))
-    return;
+async function deleteGame(gameId) {
+  const name = getGameConfigByGameId(gameId)?.name ?? gameId;
+  const confirmed = await showConfirmModal({
+    title: "Uninstall game",
+    message: `"${name}", its disc image and its snapshot will be deleted. Its save files are kept.`,
+    confirmLabel: "UNINSTALL",
+  });
+  if (!confirmed) return;
 
   try {
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry(fileName);
-
-    const gameId = getGameIdByFilename(fileName);
+    await removeOpfsFile([], `${gameId}.zip`);
+    await removeOpfsDirectory([DISCS], gameId);
     await removeOpfsFile([SNAPSHOTS], getSnapshotFileName(gameId));
 
-    if (gameId !== 'generic' && window.gamesData[gameId]) {
+    if (gameId !== "generic" && window.gamesData[gameId]) {
       delete window.gamesData[gameId];
       await saveGamesConfigToOPFS();
     }
@@ -608,9 +584,12 @@ async function deleteGame(fileName) {
     console.error("Failed to delete game:", err);
     alert("The game could not be deleted.");
   }
+
+  closeDetailPanel();
   renderOpfsTree();
   loadList();
 }
+
 
 async function deleteSavedFile(path, fileName) {
   const fullPath = [...path, fileName].join("/");
@@ -882,48 +861,48 @@ function showConfirmModal({ title, message, confirmLabel = "CONFIRM" }) {
   });
 }
 
-// Makes sure there is a configuration entry for the key:
-// - already saved: it is reused as it is
-// - known from games-config.js: its defaults are copied
-// - unknown: a new entry is created from the generic one (filled in by hand in Setup)
-async function registerGame(key) {
+// Makes sure there is a configuration entry for the key (see install-flow.js).
+// snapshotSaves: new entries save the whole emulator state, which is how a game
+// installed from a disc keeps its installed files.
+async function registerGame(key, { snapshotSaves = false } = {}) {
   if (window.gamesData[key]) return;
 
   const knownConfig = window.defaultGamesData?.[key];
-  window.gamesData[key] = knownConfig
+  const config = knownConfig
     ? structuredClone(knownConfig)
     : { ...structuredClone(window.gamesData.generic), name: key, opfsSaveFilePath: key };
 
+  if (!knownConfig && snapshotSaves) {
+    config.jsDos = { ...config.jsDos, saveMode: SAVE_MODE_PERSIST };
+  }
+
+  window.gamesData[key] = config;
   await saveGamesConfigToOPFS();
 }
 
 // Returns the key the game will be installed with, or null if the user cancelled.
-async function resolveGameKey(file) {
-  const fileKey = getGameIdByFilename(file.name);
+async function resolveGameKey(fileName) {
+  const fileKey = stripExtension(fileName);
   if (window.gamesData[fileKey]) return fileKey;
 
-  return showNewGameKeyModal(fileKey, getKnownGames());
+  return showNewGameKeyModal(suggestKey(fileName), getKnownGames());
 }
 
 async function installGame(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+  const files = [...event.target.files];
+  if (files.length === 0) return;
 
   try {
-    const key = await resolveGameKey(file);
-    if (key) {
-      await registerGame(key);
-      await writeOpfsFile([], `${key}.zip`, await file.arrayBuffer());
-      alert(`${key}.zip installed.`);
-    }
+    await installFiles(files);
   } catch (err) {
-    console.error("An error occurred while saving the ROM:", err);
-    alert("An error occurred while saving the ROM.");
+    console.error("Failed to install the game:", err);
+    alert(describeInstallError(err));
   }
 
-  // Lets the user pick the same file again
+  // Lets the user pick the same files again
   event.target.value = "";
   loadList();
+  renderOpfsTree();
 }
 
 function setupTopBarMenu() {
@@ -981,18 +960,20 @@ function displayTopBarMenu() {
   });
 }
 
-async function startGame({ container, url, jsDosConfig }) {
+async function startGame({ container, url, jsDosConfig, initFs }) {
   try {
     window.gamePlayer = Dos(container, {
       url,
       autoStart: true,
       mouseCapture: jsDosConfig?.mouseCapture || false,
+      ...(initFs ? { initFs } : {}),
       fsChanges: {
         local: false,
       },
       onEvent: (event, ci) => {
         if (event === "ci-ready") {
           activeCi = ci;
+          clearLaunchMark();
         }
       },
     });
@@ -1154,6 +1135,7 @@ async function buildOpfsTreeNode(directoryHandle, path) {
 
 async function bootstrap() {
   await initGamesConfig();
+  await checkPreviousLaunch();
   await loadList();
   await renderOpfsTree();
 
@@ -1177,6 +1159,893 @@ async function bootstrap() {
   inputFile.addEventListener("change", installGame);
   setupTopBarMenu();
   setupMobileSidebar();
+}
+
+const DISCS = "discs";
+const DISC_ISO_NAME = "cd.iso";
+const DISC_CUE_NAME = "cd.cue";
+const DISC_DRIVE_LETTER = "d";
+const MIB = 1024 ** 2;
+const GIB = 1024 ** 3;
+// Starting values for the "may not run on this device" warning: tune them after testing.
+const DISC_WARNING_BYTES = { mobile: 300 * MIB, desktop: GIB };
+// Share of the free quota an installation may use (the quota is only an estimate)
+const STORAGE_SAFETY_MARGIN = 0.9;
+// true: hand the disc to js-dos with initFs (less memory). false: put it inside the bundle ZIP.
+const DISC_VIA_INIT_FS = true;
+const LAUNCH_FLAG_KEY = "launching-game";
+const PROGRESS_THROTTLE_MS = 100;
+
+function getExtension(fileName) {
+  const match = /\.([^.]+)$/.exec(fileName);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function stripExtension(fileName) {
+  return fileName.replace(/\.[^.]+$/, "");
+}
+
+function baseName(path) {
+  return path.split(/[\\/]/).pop();
+}
+
+// "Game (Track 1).cue" -> "Game-Track-1"
+function suggestKey(fileName) {
+  return stripExtension(fileName)
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Matches lines like:  FILE "Game (Track 1).bin" BINARY
+const CUE_FILE_LINE = /^([ \t]*)FILE[ \t]+(?:"([^"]+)"|(\S+))[ \t]+(\S+)[ \t]*$/gim;
+
+function parseCueFileNames(cueText) {
+  const names = [];
+  for (const match of cueText.matchAll(CUE_FILE_LINE)) {
+    const name = baseName(match[2] ?? match[3]);
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+// nameMap: lowercase original file name -> normalized file name
+function rewriteCue(cueText, nameMap) {
+  return cueText.replace(CUE_FILE_LINE, (line, indent, quoted, bare, type) => {
+    const normalized = nameMap.get(baseName(quoted ?? bare).toLowerCase());
+    return normalized ? `${indent}FILE "${normalized}" ${type}` : line;
+  });
+}
+
+function validateSelection({ files, zips, isos, cues }) {
+  if (zips.length > 1) return "Select only one .zip file.";
+  if (isos.length > 1) return "Select only one .iso file.";
+  if (cues.length > 1) return "Select only one .cue file.";
+  if (isos.length && cues.length) {
+    return "Select either an .iso or a .cue with its track files, not both.";
+  }
+
+  const hasLooseTracks =
+    !cues.length && files.some((file) => !["zip", "iso"].includes(getExtension(file.name)));
+  if (hasLooseTracks) {
+    return "Track files need their .cue file. Select the .cue together with its tracks.";
+  }
+  if (!zips.length && !isos.length && !cues.length) {
+    return "Select a .zip, an .iso, or a .cue with its track files.";
+  }
+  return null;
+}
+
+function buildCueDisc(cueFile, cueText, files) {
+  const referenced = parseCueFileNames(cueText);
+  if (referenced.length === 0) {
+    return { error: "The .cue file does not reference any track file." };
+  }
+
+  const candidates = files.filter((file) => file !== cueFile);
+  const tracks = [];
+  const missing = [];
+  for (const name of referenced) {
+    const file = candidates.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
+    if (file) tracks.push({ file, name });
+    else missing.push(name);
+  }
+
+  if (missing.length > 0) {
+    return { error: `Missing files referenced by the .cue: ${missing.join(", ")}` };
+  }
+  return { type: "cue", cue: cueFile, cueText, tracks };
+}
+
+// Returns { error } or { zip, disc, primaryName }.
+// A game can have a .zip, a disc (.iso, or .cue with its tracks), or both.
+function planInstall(files, cueText) {
+  const withExtension = (extension) =>
+    files.filter((file) => getExtension(file.name) === extension);
+  const zips = withExtension("zip");
+  const isos = withExtension("iso");
+  const cues = withExtension("cue");
+
+  const error = validateSelection({ files, zips, isos, cues });
+  if (error) return { error };
+
+  let disc = null;
+  if (isos.length) disc = { type: "iso", image: isos[0] };
+  if (cues.length) disc = buildCueDisc(cues[0], cueText, files);
+  if (disc?.error) return { error: disc.error };
+
+  const primary = zips[0] ?? isos[0] ?? cues[0];
+  return { zip: zips[0] ?? null, disc, primaryName: primary.name };
+}
+
+async function readInstallPlan(files) {
+  const cueFile = files.find((file) => getExtension(file.name) === "cue");
+  const cueText = cueFile ? (await cueFile.text()).replace(/^\uFEFF/, "") : null;
+  return planInstall(files, cueText);
+}
+
+// Each item is { path, name, file } or { path, name, text }.
+// Disc files get predictable names (cd.iso, cd.cue, track01.bin...), and the .cue is rewritten to match.
+function buildInstallItems(plan, key) {
+  const items = [];
+  if (plan.zip) items.push({ path: [], name: `${key}.zip`, file: plan.zip });
+
+  const discPath = [DISCS, key];
+  if (plan.disc?.type === "iso") {
+    items.push({ path: discPath, name: DISC_ISO_NAME, file: plan.disc.image });
+  }
+
+  if (plan.disc?.type === "cue") {
+    const nameMap = new Map();
+    plan.disc.tracks.forEach(({ file, name }, index) => {
+      const number = String(index + 1).padStart(2, "0");
+      const normalized = `track${number}.${getExtension(file.name) || "bin"}`;
+      nameMap.set(name.toLowerCase(), normalized);
+      items.push({ path: discPath, name: normalized, file });
+    });
+    const text = rewriteCue(plan.disc.cueText, nameMap);
+    items.push({ path: discPath, name: DISC_CUE_NAME, text });
+  }
+
+  return items;
+}
+
+function getItemSize(item) {
+  return item.file ? item.file.size : new TextEncoder().encode(item.text).length;
+}
+
+function getTotalSize(items) {
+  return items.reduce((total, item) => total + getItemSize(item), 0);
+}
+
+function getDiscBytes(items) {
+  return getTotalSize(items.filter((item) => item.path[0] === DISCS));
+}
+
+// null when the browser does not report it
+async function getAvailableStorage() {
+  if (!navigator.storage?.estimate) return null;
+  const { quota, usage = 0 } = await navigator.storage.estimate();
+  return quota === undefined ? null : Math.max(0, quota - usage);
+}
+
+// Above this disc size the game may not run (the emulator keeps the disc in memory).
+function getDiscWarningBytes() {
+  const isMobile = window.matchMedia("(pointer: coarse)").matches;
+  const base = isMobile ? DISC_WARNING_BYTES.mobile : DISC_WARNING_BYTES.desktop;
+  const memoryGiB = navigator.deviceMemory; // Chromium only, rounded
+  return memoryGiB ? Math.min(base, memoryGiB * GIB * 0.1) : base;
+}
+
+// level: "ok", "warn" (ask the user) or "block" (does not fit).
+// availableBytes is null when the browser does not report the free space.
+function checkInstallSize({ totalBytes, discBytes, availableBytes, warningBytes }) {
+  if (availableBytes !== null && totalBytes > availableBytes * STORAGE_SAFETY_MARGIN) {
+    return {
+      level: "block",
+      message: `Not enough storage: ${formatFileSize(totalBytes)} needed, ${formatFileSize(availableBytes)} available.`,
+    };
+  }
+
+  if (discBytes > warningBytes) {
+    return {
+      level: "warn",
+      message: `This disc image (${formatFileSize(discBytes)}) is large for this device and the game may fail to run. Install it anyway?`,
+    };
+  }
+
+  return { level: "ok", message: "" };
+}
+
+async function confirmInstallSize(items) {
+  const check = checkInstallSize({
+    totalBytes: getTotalSize(items),
+    discBytes: getDiscBytes(items),
+    availableBytes: await getAvailableStorage(),
+    warningBytes: getDiscWarningBytes(),
+  });
+
+  if (check.level === "block") {
+    alert(check.message);
+    return false;
+  }
+  if (check.level === "warn") {
+    return showConfirmModal({
+      title: "Large disc image",
+      message: check.message,
+      confirmLabel: "INSTALL",
+    });
+  }
+  return true;
+}
+
+async function opfsEntryExists(path, name) {
+  try {
+    const directory = await getOpfsDirectory(path);
+    for await (const [entryName] of directory.entries()) {
+      if (entryName === name) return true;
+    }
+    return false;
+  } catch (err) {
+    if (err.name === "NotFoundError") return false;
+    throw err;
+  }
+}
+
+async function removeOpfsDirectory(path, name) {
+  try {
+    const parent = await getOpfsDirectory(path);
+    await parent.removeEntry(name, { recursive: true });
+  } catch (err) {
+    if (err.name !== "NotFoundError") {
+      console.error(`[OPFS] Failed to remove folder ${[...path, name].join("/")}:`, err);
+    }
+  }
+}
+
+async function getInstalledMedia(gameId) {
+  return {
+    zip: await opfsEntryExists([], `${gameId}.zip`),
+    disc: await opfsEntryExists([DISCS], gameId),
+  };
+}
+
+// Copies a file in chunks, so the whole file is never held in memory.
+async function copyFileToOpfs(file, path, name, { signal, onBytes }) {
+  const directory = await getOpfsDirectory(path, true);
+  const fileHandle = await directory.getFileHandle(name, { create: true });
+  const writable = await fileHandle.createWritable();
+
+  const counter = new TransformStream({
+    transform(chunk, controller) {
+      onBytes(chunk.byteLength);
+      controller.enqueue(chunk);
+    },
+  });
+
+  await file.stream().pipeThrough(counter).pipeTo(writable, { signal });
+}
+
+async function requestPersistentStorage() {
+  try {
+    await navigator.storage?.persist?.();
+  } catch {
+    // Not supported: the installation continues without persistent storage
+  }
+}
+
+function showProgressModal(title) {
+  const controller = new AbortController();
+  const overlay = document.createElement("div");
+  overlay.className = "fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4";
+
+  overlay.innerHTML = `
+    <div class="bg-surface-container-low border border-primary/40 shadow-[0_0_30px_rgba(87,217,217,0.15)] w-full max-w-md p-6">
+      <h2 id="progress-title" class="text-primary font-bold uppercase text-sm tracking-widest phosphor-glow mb-4"></h2>
+      <p id="progress-label" class="text-[10px] text-secondary-fixed-dim mb-3 break-all min-h-[1rem]"></p>
+      <div class="h-2 bg-surface-container-highest mb-2">
+        <div id="progress-bar" class="h-2 bg-primary" style="width: 0%"></div>
+      </div>
+      <p id="progress-percent" class="text-[10px] text-secondary mb-6">0%</p>
+      <button id="progress-cancel" class="w-full bg-surface-container-highest text-on-surface border border-outline-variant/30 py-3 font-bold uppercase text-xs hover:bg-error hover:text-on-error transition-colors">
+        CANCEL
+      </button>
+    </div>
+  `;
+
+  // textContent (not innerHTML): the title and labels contain file names
+  overlay.querySelector("#progress-title").textContent = title;
+  const label = overlay.querySelector("#progress-label");
+  const bar = overlay.querySelector("#progress-bar");
+  const percent = overlay.querySelector("#progress-percent");
+
+  const cancelButton = overlay.querySelector("#progress-cancel");
+  cancelButton.onclick = () => {
+    cancelButton.disabled = true;
+    cancelButton.textContent = "CANCELLING...";
+    controller.abort();
+  };
+
+  document.body.append(overlay);
+
+  return {
+    signal: controller.signal,
+    update(text, fraction) {
+      const value = Math.min(100, Math.round(fraction * 100));
+      label.textContent = text;
+      bar.style.width = `${value}%`;
+      percent.textContent = `${value}%`;
+    },
+    close: () => overlay.remove(),
+  };
+}
+
+// Returns track(bytes, label), which updates the progress at most every PROGRESS_THROTTLE_MS.
+function createProgressTracker(items, progress) {
+  const totalBytes = getTotalSize(items) || 1;
+  let copiedBytes = 0;
+  let lastUpdate = 0;
+
+  return (bytes, label) => {
+    copiedBytes += bytes;
+    const now = performance.now();
+    const isLast = copiedBytes >= totalBytes;
+    if (!isLast && now - lastUpdate < PROGRESS_THROTTLE_MS) return;
+
+    lastUpdate = now;
+    progress.update(label, copiedBytes / totalBytes);
+  };
+}
+
+async function copyInstallItems(items, progress) {
+  const track = createProgressTracker(items, progress);
+
+  for (const item of items) {
+    if (item.file) {
+      await copyFileToOpfs(item.file, item.path, item.name, {
+        signal: progress.signal,
+        onBytes: (bytes) => track(bytes, item.name),
+      });
+    } else {
+      await writeOpfsFile(item.path, item.name, item.text);
+      track(getItemSize(item), item.name);
+    }
+  }
+}
+
+async function confirmReplacement(key, plan, installed) {
+  const replaced = [];
+  if (plan.zip && installed.zip) replaced.push("game files");
+  if (plan.disc && installed.disc) replaced.push("disc image");
+  if (replaced.length === 0) return true;
+
+  return showConfirmModal({
+    title: "Replace files",
+    message: `"${key}" is already installed. Its ${replaced.join(" and ")} will be replaced.`,
+    confirmLabel: "REPLACE",
+  });
+}
+
+async function removeFailedInstall(key, plan, installed) {
+  if (plan.disc) await removeOpfsDirectory([DISCS], key);
+  if (plan.zip && !installed.zip) await removeOpfsFile([], `${key}.zip`);
+}
+
+async function copyAndRegister(key, plan, items, installed) {
+  await requestPersistentStorage();
+
+  // A new disc replaces the previous one completely, so no old tracks are left behind
+  if (plan.disc) await removeOpfsDirectory([DISCS], key);
+
+  const progress = showProgressModal(`Installing ${key}`);
+  let done = false;
+  try {
+    await copyInstallItems(items, progress);
+    await registerGame(key, { snapshotSaves: !plan.zip });
+    await saveDiscMount(key, getPlanImageName(plan));
+    done = true;
+  } catch (err) {
+    await removeFailedInstall(key, plan, installed);
+    if (err.name !== "AbortError") throw err; // AbortError: cancelled by the user
+  } finally {
+    progress.close();
+  }
+
+  if (done) alert(`${key} installed.`);
+}
+
+async function installFiles(files) {
+  const selection = await resolveArchives(files);
+  if (!selection) return;
+
+  const plan = await readInstallPlan(selection.files);
+  if (plan.error) {
+    alert(plan.error);
+    return;
+  }
+
+  // A disc that came out of a .zip is named after the .zip, not after the .cue inside it
+  const keySource = plan.zip ? plan.primaryName : (selection.archiveName ?? plan.primaryName);
+  const key = await resolveGameKey(keySource);
+  if (!key) return;
+
+  const items = buildInstallItems(plan, key);
+  if (!(await confirmInstallSize(items))) return;
+
+  const installed = await getInstalledMedia(key);
+  if (!(await confirmReplacement(key, plan, installed))) return;
+
+  await copyAndRegister(key, plan, items, installed);
+}
+
+function describeInstallError(err) {
+  return err.name === "QuotaExceededError"
+    ? "Not enough storage to finish the installation."
+    : "An error occurred while installing the game.";
+}
+
+async function listDiscGameIds() {
+  try {
+    const directory = await getOpfsDirectory([DISCS]);
+    const ids = [];
+    for await (const [name, handle] of directory.entries()) {
+      if (handle.kind === "directory") ids.push(name);
+    }
+    return ids;
+  } catch (err) {
+    if (err.name === "NotFoundError") return [];
+    throw err;
+  }
+}
+
+// A game exists when it has a .zip, a disc, or both.
+async function listInstalledGames() {
+  const games = new Map();
+  const upsert = (gameId) => {
+    if (!games.has(gameId)) {
+      games.set(gameId, { gameId, zipHandle: null, zipName: null, hasDisc: false });
+    }
+    return games.get(gameId);
+  };
+
+  const root = await getOpfsDirectory();
+  for await (const [name, handle] of root.entries()) {
+    if (handle.kind === "file" && name.endsWith(".zip")) {
+      const game = upsert(getGameIdByFilename(name));
+      game.zipHandle = handle;
+      game.zipName = name;
+    }
+  }
+
+  for (const gameId of await listDiscGameIds()) {
+    upsert(gameId).hasDisc = true;
+  }
+
+  return [...games.values()];
+}
+
+function buildGameCard(game) {
+  const config = getGameConfigByGameId(game.gameId);
+  const company = `${config?.company || "-"}${game.hasDisc ? " \u00b7 CD" : ""}`;
+
+  const card = document.createElement("div");
+  card.className =
+    "group cursor-pointer bg-surface-container-low border border-outline-variant/20 hover:border-primary/50 transition-all p-3";
+
+  card.innerHTML = `<div class="relative bg-surface-container-high aspect-square mb-4 overflow-hidden border border-primary/20">
+      <img
+        class="w-full h-full object-cover grayscale contrast-125 brightness-75 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-300"
+        data-alt="Retro 90s FPS game screenshot with dark corridors"
+        src="${escapeHtml(config?.wallscroll || "./assets/generic1.png")}"
+      />
+      <div class="absolute inset-0 bg-primary/10 mix-blend-overlay"></div>
+    </div>
+    <div class="flex justify-between items-start">
+      <div>
+        <h3 class="text-on-surface font-bold text-sm group-hover:text-primary">${escapeHtml(config.name)}</h3>
+        <p class="text-secondary text-[10px] mt-1 uppercase">${escapeHtml(company)}</p>
+      </div>
+      <span class="text-primary font-bold text-[10px] tracking-widest"><strike>[INFO]</strike></span>
+    </div>`;
+
+  card.onclick = () => loadGameDetails(game.zipHandle, game.zipName, game.gameId);
+  return card;
+}
+
+// Puts the mount line in the right place: after "mount c .", else after [autoexec], else in a new section.
+function insertMountLine(dosboxConf, mountLine) {
+  const driveMount = /^[ \t]*mount[ \t]+c\b.*$/im;
+  if (driveMount.test(dosboxConf)) {
+    return dosboxConf.replace(driveMount, (line) => `${line}\n${mountLine}`);
+  }
+
+  const autoexecHeader = /^\[autoexec\][ \t]*$/im;
+  if (autoexecHeader.test(dosboxConf)) {
+    return dosboxConf.replace(autoexecHeader, (header) => `${header}\n${mountLine}`);
+  }
+
+  return `${dosboxConf}\n[autoexec]\n${mountLine}\n`;
+}
+
+// Makes sure the dosbox.conf mounts the disc as D:.
+// - no mount for D: -> "imgmount d <image> -t iso" is added after "mount c ."
+// - a line generated before (cd.iso or cd.cue) -> it is updated to the current image
+// - a mount written by hand -> it is left alone
+function withDiscMount(dosboxConf, imageName) {
+  if (!imageName) return dosboxConf;
+
+  const drive = DISC_DRIVE_LETTER;
+  const generatedMount = new RegExp(
+    `^([ \\t]*imgmount[ \\t]+${drive}[ \\t]+)cd\\.(?:iso|cue)\\b`,
+    "im",
+  );
+  if (generatedMount.test(dosboxConf)) {
+    return dosboxConf.replace(generatedMount, `$1${imageName}`);
+  }
+
+  const customMount = new RegExp(`^[ \\t]*imgmount[ \\t]+${drive}\\b`, "im");
+  if (customMount.test(dosboxConf)) return dosboxConf;
+
+  return insertMountLine(dosboxConf, `imgmount ${drive} ${imageName} -t iso`);
+}
+
+// Image name a plan installs: "cd.iso", "cd.cue", or null when the game has no disc.
+function getPlanImageName(plan) {
+  if (!plan.disc) return null;
+  return plan.disc.type === "cue" ? DISC_CUE_NAME : DISC_ISO_NAME;
+}
+
+// Saves the mount line in the game's config, so it shows up (and can be edited) in Setup.
+async function saveDiscMount(gameId, imageName) {
+  const config = window.gamesData[gameId];
+  if (!config || !imageName) return;
+
+  const updated = withDiscMount(config.dosboxConfig ?? "", imageName);
+  if (updated === config.dosboxConfig) return;
+
+  config.dosboxConfig = updated;
+  await saveGamesConfigToOPFS();
+}
+
+async function readDiscFiles(gameId) {
+  try {
+    const directory = await getOpfsDirectory([DISCS, gameId]);
+    const files = [];
+    for await (const [name, handle] of directory.entries()) {
+      if (handle.kind === "file") files.push({ name, file: await handle.getFile() });
+    }
+    return files;
+  } catch (err) {
+    if (err.name === "NotFoundError") return [];
+    throw err;
+  }
+}
+
+function getDiscImageName(discFiles) {
+  const names = discFiles.map(({ name }) => name);
+  if (names.includes(DISC_CUE_NAME)) return DISC_CUE_NAME;
+  return names.includes(DISC_ISO_NAME) ? DISC_ISO_NAME : null;
+}
+
+// Returns null when the game has no disc, or { image, entries } ready for the emulator.
+async function prepareDisc(gameId) {
+  const discFiles = await readDiscFiles(gameId);
+  const image = getDiscImageName(discFiles);
+  if (!image) return null;
+
+  const entries = [];
+  for (const { name, file } of discFiles) {
+    entries.push({ path: name, contents: new Uint8Array(await file.arrayBuffer()) });
+  }
+  return { image, entries };
+}
+
+// Returns the initFs option for js-dos, or undefined when the disc goes inside the ZIP.
+function attachDisc(zip, disc) {
+  if (!disc) return undefined;
+  if (DISC_VIA_INIT_FS) return disc.entries;
+
+  disc.entries.forEach(({ path, contents }) => zip.file(path, contents, { compression: "STORE" }));
+  return undefined;
+}
+
+// A game can be only a disc: then the bundle starts empty and only gets the config.
+async function openGameZip(fileHandle) {
+  if (!fileHandle) return new JSZip();
+  const file = await fileHandle.getFile();
+  return JSZip.loadAsync(await file.arrayBuffer());
+}
+
+// Launch marker: if the page dies while loading (typically out of memory), the next start says so.
+function markLaunchStarted(gameId) {
+  try {
+    localStorage.setItem(LAUNCH_FLAG_KEY, gameId);
+  } catch {
+    // Storage unavailable: the check is simply skipped
+  }
+}
+
+function clearLaunchMark() {
+  try {
+    localStorage.removeItem(LAUNCH_FLAG_KEY);
+  } catch {
+    // Storage unavailable: nothing to clear
+  }
+}
+
+function checkPreviousLaunch() {
+  let gameId = null;
+  try {
+    gameId = localStorage.getItem(LAUNCH_FLAG_KEY);
+  } catch {
+    // Nothing to do
+  }
+  if (!gameId) return;
+
+  clearLaunchMark();
+  const name = getGameConfigByGameId(gameId)?.name ?? gameId;
+  alert(
+    `The last launch of "${name}" did not finish. If this keeps happening, the game may be too large for this device.`,
+  );
+}
+
+const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+const ZIP_LOCAL_SIGNATURE = 0x04034b50;
+const ZIP_EOCD_SIZE = 22;
+const ZIP_MAX_COMMENT_SIZE = 0xffff;
+const ZIP_LOCAL_HEADER_SIZE = 30;
+const ZIP_CENTRAL_HEADER_SIZE = 46;
+const ZIP_STORED = 0;
+const ZIP_DEFLATED = 8;
+const DISC_ARCHIVE_EXTENSIONS = ["cue", "iso", "bin", "wav", "mp3", "ogg", "flac"];
+
+function findZipEndRecord(view) {
+  for (let offset = view.byteLength - ZIP_EOCD_SIZE; offset >= 0; offset--) {
+    if (view.getUint32(offset, true) === ZIP_EOCD_SIGNATURE) return offset;
+  }
+  throw new Error("Not a valid .zip file.");
+}
+
+function parseZipDirectory(view, entryCount) {
+  const decoder = new TextDecoder();
+  const entries = [];
+  let offset = 0;
+
+  for (let index = 0; index < entryCount; index++) {
+    if (view.getUint32(offset, true) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error("The .zip directory is corrupted.");
+    }
+
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const nameBytes = new Uint8Array(
+      view.buffer,
+      view.byteOffset + offset + ZIP_CENTRAL_HEADER_SIZE,
+      nameLength,
+    );
+    const name = decoder.decode(nameBytes);
+
+    entries.push({
+      name,
+      isDirectory: name.endsWith("/"),
+      flags: view.getUint16(offset + 8, true),
+      method: view.getUint16(offset + 10, true),
+      compressedSize: view.getUint32(offset + 20, true),
+      size: view.getUint32(offset + 24, true),
+      localOffset: view.getUint32(offset + 42, true),
+    });
+
+    offset += ZIP_CENTRAL_HEADER_SIZE + nameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+async function readZipEntries(file) {
+  const tailSize = Math.min(file.size, ZIP_EOCD_SIZE + ZIP_MAX_COMMENT_SIZE);
+  const tail = new DataView(await file.slice(file.size - tailSize).arrayBuffer());
+  const end = findZipEndRecord(tail);
+
+  const entryCount = tail.getUint16(end + 10, true);
+  const directorySize = tail.getUint32(end + 12, true);
+  const directoryOffset = tail.getUint32(end + 16, true);
+  if (entryCount === 0xffff || directorySize === 0xffffffff || directoryOffset === 0xffffffff) {
+    throw new Error("Zip64 archives are not supported.");
+  }
+
+  const directoryEnd = directoryOffset + directorySize;
+  const directory = await file.slice(directoryOffset, directoryEnd).arrayBuffer();
+  return parseZipDirectory(new DataView(directory), entryCount);
+}
+
+// The size recorded in the directory must match what comes out of the stream
+function createSizeChecker(entry) {
+  let total = 0;
+  return new TransformStream({
+    transform(chunk, controller) {
+      total += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    flush() {
+      if (total !== entry.size) {
+        throw new Error(`"${entry.name}" is corrupted or truncated.`);
+      }
+    },
+  });
+}
+
+async function openZipEntryStream(file, entry) {
+  if (entry.flags & 1) throw new Error("Encrypted .zip files are not supported.");
+  if (![ZIP_STORED, ZIP_DEFLATED].includes(entry.method)) {
+    throw new Error(`Unsupported compression method (${entry.method}) in "${entry.name}".`);
+  }
+
+  // The local header has its own name/extra lengths, which can differ from the directory's
+  const headerEnd = entry.localOffset + ZIP_LOCAL_HEADER_SIZE;
+  const header = new DataView(await file.slice(entry.localOffset, headerEnd).arrayBuffer());
+  if (header.getUint32(0, true) !== ZIP_LOCAL_SIGNATURE) {
+    throw new Error("The .zip file is corrupted.");
+  }
+
+  const dataStart = headerEnd + header.getUint16(26, true) + header.getUint16(28, true);
+  let stream = file.slice(dataStart, dataStart + entry.compressedSize).stream();
+  if (entry.method === ZIP_DEFLATED) {
+    stream = stream.pipeThrough(new DecompressionStream("deflate-raw"));
+  }
+  return stream.pipeThrough(createSizeChecker(entry));
+}
+
+// Looks like a File for the install flow (name, size, stream, text), but reads from the .zip.
+function createZipEntryFile(zipFile, entry) {
+  const file = {
+    name: baseName(entry.name),
+    size: entry.size,
+    stream() {
+      let reader = null;
+      return new ReadableStream({
+        async pull(controller) {
+          reader ??= (await openZipEntryStream(zipFile, entry)).getReader();
+          const { done, value } = await reader.read();
+          if (done) controller.close();
+          else controller.enqueue(value);
+        },
+        cancel: (reason) => reader?.cancel(reason),
+      });
+    },
+    text: () => new Response(file.stream()).text(),
+  };
+  return file;
+}
+
+// A disc archive has a .cue or .iso and is not a js-dos bundle. Returns the entries that make up the disc.
+function selectDiscEntries(entries) {
+  const files = entries.filter(
+    (entry) =>
+      !entry.isDirectory && !entry.name.startsWith("__MACOSX/") && !baseName(entry.name).startsWith("."),
+  );
+
+  const isBundle = files.some((entry) => entry.name.startsWith(".jsdos/"));
+  const hasImage = files.some((entry) => ["cue", "iso"].includes(getExtension(entry.name)));
+  if (isBundle || !hasImage) return [];
+
+  return files.filter((entry) => DISC_ARCHIVE_EXTENSIONS.includes(getExtension(entry.name)));
+}
+
+async function findDiscFiles(zipFile) {
+  try {
+    const entries = selectDiscEntries(await readZipEntries(zipFile));
+    return entries.map((entry) => createZipEntryFile(zipFile, entry));
+  } catch (err) {
+    // Not readable as a .zip (or Zip64): it is treated as a normal game bundle
+    console.warn(`[ZIP] Could not inspect ${zipFile.name}:`, err.message);
+    return [];
+  }
+}
+
+function validateArchiveDisc(discFiles) {
+  const count = (extension) =>
+    discFiles.filter((file) => getExtension(file.name) === extension).length;
+
+  if (count("cue") > 1 || count("iso") > 1 || (count("cue") > 0 && count("iso") > 0)) {
+    return "The archive contains more than one disc image. Extract and install them separately.";
+  }
+  return null;
+}
+
+function showChoiceModal({ title, message, options }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4";
+
+    overlay.innerHTML = `
+      <div class="bg-surface-container-low border border-primary/40 shadow-[0_0_30px_rgba(87,217,217,0.15)] w-full max-w-md p-6">
+        <h2 id="choice-modal-title" class="text-primary font-bold uppercase text-sm tracking-widest phosphor-glow mb-4"></h2>
+        <p id="choice-modal-message" class="text-[10px] text-secondary-fixed-dim mb-6 leading-relaxed break-all"></p>
+        <div id="choice-modal-options" class="flex flex-col gap-3"></div>
+      </div>
+    `;
+
+    // textContent (not innerHTML): the message contains file names
+    overlay.querySelector("#choice-modal-title").textContent = title;
+    overlay.querySelector("#choice-modal-message").textContent = message;
+
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") close(null);
+    };
+
+    const close = (value) => {
+      document.removeEventListener("keydown", onKeyDown);
+      overlay.remove();
+      resolve(value);
+    };
+
+    const container = overlay.querySelector("#choice-modal-options");
+    options.forEach(({ label, value }, index) => {
+      const button = document.createElement("button");
+      button.className =
+        index === 0
+          ? "w-full bg-[#57d9d9] text-[#003737] py-3 font-black uppercase text-xs tracking-widest hover:brightness-110 active:scale-95 transition-all"
+          : "w-full bg-surface-container-high text-secondary py-3 font-bold uppercase text-xs tracking-wider border border-outline-variant/30 hover:bg-surface-variant transition-colors";
+      button.textContent = label;
+      button.onclick = () => close(value);
+      container.append(button);
+    });
+
+    const cancelButton = document.createElement("button");
+    cancelButton.className =
+      "w-full bg-surface-container-highest text-on-surface border border-outline-variant/30 py-3 font-bold uppercase text-xs hover:bg-error hover:text-on-error transition-colors";
+    cancelButton.textContent = "CANCEL";
+    cancelButton.onclick = () => close(null);
+    container.append(cancelButton);
+
+    document.addEventListener("keydown", onKeyDown);
+    document.body.append(overlay);
+    cancelButton.focus();
+  });
+}
+
+function askArchiveChoice(archiveName) {
+  return showChoiceModal({
+    title: "Disc image detected",
+    message: `"${archiveName}" contains a disc image. Install it as a disc, or as game files?`,
+    options: [
+      { label: "INSTALL AS DISC", value: "disc" },
+      { label: "INSTALL AS GAME FILES", value: "bundle" },
+    ],
+  });
+}
+
+// Replaces each .zip that holds a disc with the files of that disc, if the user wants it as a disc.
+// Returns { files, archiveName }, or null when the user cancels or the archive is not valid.
+async function resolveArchives(files) {
+  const resolved = [];
+  let archiveName = null;
+
+  for (const file of files) {
+    const discFiles = getExtension(file.name) === "zip" ? await findDiscFiles(file) : [];
+    if (discFiles.length === 0) {
+      resolved.push(file);
+      continue;
+    }
+
+    const choice = await askArchiveChoice(file.name);
+    if (choice === null) return null;
+    if (choice === "bundle") {
+      resolved.push(file);
+      continue;
+    }
+
+    const problem = validateArchiveDisc(discFiles);
+    if (problem) {
+      alert(problem);
+      return null;
+    }
+    resolved.push(...discFiles);
+    archiveName = file.name;
+  }
+
+  return { files: resolved, archiveName };
 }
 
 bootstrap();
