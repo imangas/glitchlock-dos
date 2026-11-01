@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/imangas/glitchlock-dos/compare/v0.13.0...v0.14.0) (2026-11-01)
+
+
+### Features
+
+* **discs:** install iso and cue/bin disc images as part of a game ([cb6a2f0](https://github.com/imangas/glitchlock-dos/commit/cb6a2f0b90d4896a93f6b84db5bfd637e46af69c))
+* **discs:** install iso and cue/bin disc images as part of a game ([afd6643](https://github.com/imangas/glitchlock-dos/commit/afd66431e2a3ab86343fe20d6c2b060376f72fc7))
+
 ## [0.13.0](https://github.com/imangas/glitchlock-dos/compare/v0.12.0...v0.13.0) (2026-10-25)
 
 
