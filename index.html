@@ -199,9 +199,10 @@
         class="ml-0 md:ml-64 mr-0 md:mr-80 flex-1 min-h-0 p-6 overflow-y-auto custom-scrollbar bg-surface-container-lowest"
       >
         <div class="mb-8">
-          <p class="text-secondary-fixed-dim font-label text-xs tracking-tighter mb-1">
-            C:\GAMES\ROOT\ &gt; 10-24-1994
-          </p>
+          <p
+            id="storage-info-mobile"
+            class="md:hidden min-h-[1rem] text-primary font-bold font-label text-xs tracking-tighter mb-1"
+          ></p>
           <h1
             class="text-3xl font-bold font-headline text-on-surface phosphor-glow uppercase tracking-tight"
           >
@@ -223,10 +224,8 @@
     >
       <div class="flex gap-6 items-center">
         <div class="flex items-center gap-2">
-          <span class="text-[10px] text-secondary"><strike>CONVENTIONAL_MEM:</strike></span>
-          <span class="text-[10px] text-primary font-bold"
-            ><strike>XXX KB / XXX KB FREE</strike></span
-          >
+          <span class="text-[10px] text-secondary">STORAGE:</span>
+          <span id="storage-info" class="text-[10px] text-primary font-bold">--</span>
         </div>
         <div class="h-3 w-[1px] bg-outline-variant"></div>
         <div class="flex items-center gap-2">

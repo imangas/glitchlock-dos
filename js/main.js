@@ -1043,9 +1043,19 @@ async function renderOpfsFolderTree(folderName, containerId, emptyMessage) {
   }
 }
 
+async function refreshStorageInfo() {
+  const text = formatStorageInfo(await getStorageEstimate());
+ 
+  const footerInfo = document.getElementById("storage-info");
+  const mobileInfo = document.getElementById("storage-info-mobile");
+  if (footerInfo) footerInfo.textContent = text;
+  if (mobileInfo) mobileInfo.textContent = `STORAGE: ${text}`;
+}
+
 async function renderOpfsTree() {
   await renderOpfsFolderTree(SAVEGAMES, "opfs-tree", "No savegames yet.");
   await renderOpfsFolderTree(SNAPSHOTS, "snapshots-tree", "No snapshots yet.");
+  await refreshStorageInfo();
 }
 
 async function readSortedEntries(directoryHandle) {
@@ -1321,11 +1331,33 @@ function getDiscBytes(items) {
   return getTotalSize(items.filter((item) => item.path[0] === DISCS));
 }
 
-// null when the browser does not report it
-async function getAvailableStorage() {
+// { quota, usage } in bytes, or null when the browser does not report it.
+// The numbers are estimates: the quota is not the physical free space of the disk.
+async function getStorageEstimate() {
   if (!navigator.storage?.estimate) return null;
-  const { quota, usage = 0 } = await navigator.storage.estimate();
-  return quota === undefined ? null : Math.max(0, quota - usage);
+
+  try {
+    const { quota, usage = 0 } = await navigator.storage.estimate();
+    return quota === undefined ? null : { quota, usage };
+  } catch {
+    // The estimate failed: the figures are simply not shown
+    return null;
+  }
+}
+
+// null when unknown
+async function getAvailableStorage() {
+  const estimate = await getStorageEstimate();
+  return estimate ? Math.max(0, estimate.quota - estimate.usage) : null;
+}
+
+// "1.2GB USED / 8.8GB FREE", or "N/A" when the browser does not report it
+function formatStorageInfo(estimate) {
+  if (!estimate) return "N/A";
+ 
+  const used = formatFileSize(estimate.usage).toUpperCase();
+  const free = formatFileSize(Math.max(0, estimate.quota - estimate.usage)).toUpperCase();
+  return `${used} USED / ${free} FREE`;
 }
 
 // Above this disc size the game may not run (the emulator keeps the disc in memory).
