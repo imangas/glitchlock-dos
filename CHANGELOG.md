@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0](https://github.com/imangas/glitchlock-dos/compare/v0.14.0...v0.15.0) (2026-11-09)
+
+
+### Features
+
+* **storage:** show the used and free storage in the footer and above the game list ([4f555f6](https://github.com/imangas/glitchlock-dos/commit/4f555f61c6bbcc04ff436bfd941c88b6ac3e7f3a))
+* **storage:** show the used and free storage in the footer and above… ([52b4c28](https://github.com/imangas/glitchlock-dos/commit/52b4c28c6885f3a6ffcc0517a951d0ea30e9cc23))
+
 ## [0.14.0](https://github.com/imangas/glitchlock-dos/compare/v0.13.0...v0.14.0) (2026-11-01)
 
 
