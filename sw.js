@@ -23,6 +23,9 @@ const ASSETS_TO_CACHE = [
   './css/styles.css',
   'https://v8.js-dos.com/latest/js-dos.js',
   'https://v8.js-dos.com/latest/wdosbox.wasm',
+  'https://v8.js-dos.com/latest/emulators/emulators.js',
+  'https://v8.js-dos.com/latest/emulators/wdosbox.js',
+  'https://v8.js-dos.com/latest/emulators/wdosbox.wasm',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   // CSS de Google Fonts
   'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap',
