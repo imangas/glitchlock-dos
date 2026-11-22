@@ -15,19 +15,22 @@
 const CACHE_NAME = "dos-pwa-v0.16.0"; // x-release-please-version
 
 // 1. URLs exactas a precargar en la instalación
-const ASSETS_TO_CACHE = [
+const LOCAL_ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './js/main.js',
+  './js/games-config.js',
   './css/styles.css',
+];
+
+const CDN_ASSETS = [
   'https://v8.js-dos.com/latest/js-dos.js',
-  'https://v8.js-dos.com/latest/wdosbox.wasm',
+  'https://v8.js-dos.com/latest/js-dos.css',
   'https://v8.js-dos.com/latest/emulators/emulators.js',
   'https://v8.js-dos.com/latest/emulators/wdosbox.js',
   'https://v8.js-dos.com/latest/emulators/wdosbox.wasm',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
-  // CSS de Google Fonts
   'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap',
   'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap',
 ];
@@ -35,10 +38,18 @@ const ASSETS_TO_CACHE = [
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Guardando Tailwind, Fonts y scripts en caché...');
-      return cache.addAll(ASSETS_TO_CACHE);
-    })
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // Local files must be cached, or the installation fails
+      await cache.addAll(LOCAL_ASSETS);
+
+      // CDN files are best effort: one failure must not abort the installation
+      const results = await Promise.allSettled(CDN_ASSETS.map((url) => cache.add(url)));
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.warn('[SW] Not cached:', CDN_ASSETS[index]);
+        }
+      });
+    }),
   );
 });
 
