@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/imangas/glitchlock-dos/compare/v0.15.0...v0.16.0) (2026-11-22)
+
+
+### Features
+
+* add js-dos.com/latest/ emulators+wsdosbox into cache ([#25](https://github.com/imangas/glitchlock-dos/issues/25)) ([b4b3439](https://github.com/imangas/glitchlock-dos/commit/b4b34391a63c777676c1b1859baa8053020193e2))
+
 ## [0.15.0](https://github.com/imangas/glitchlock-dos/compare/v0.14.0...v0.15.0) (2026-11-09)
 
 
