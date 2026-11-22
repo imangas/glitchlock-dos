@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/imangas/glitchlock-dos/compare/v0.16.0...v0.16.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* assets for js-dos in sw.js ([#27](https://github.com/imangas/glitchlock-dos/issues/27)) ([8922ff0](https://github.com/imangas/glitchlock-dos/commit/8922ff0a3578275f82141ecffb0fe46509000c61))
+
 ## [0.16.0](https://github.com/imangas/glitchlock-dos/compare/v0.15.0...v0.16.0) (2026-11-22)
 
 
